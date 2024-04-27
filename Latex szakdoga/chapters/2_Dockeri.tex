@@ -1,0 +1,65 @@
+Alapvetően 2 dolgot dockerizáltam.
+\begin{enumerate}
+	\item \textbf{Sprinboot} applikációt, ami az interface-t fogja szolgáltatni számunkra.
+	\item \textbf{Prometheust} amely segítségével pedig metrikákat tudunk készíteni a későbbi riasztások készítése érdekében.
+\end{enumerate}
+Ezen alkalmazások dockerizálásához 3 komponensre van szükségünk, egy \textit{prometheus.yml} fájlra, melyben a prometheushoz tartozó configurációs beállításokat helyezzük el.
+Továbbá, szükségünk van egy \textit{docker-compose.yml} fájlra is, melyben megadjuk a springboot service-nek is meg a prometheusnak is a portokat és azt, hogy hol érjük el a prometheus.yml, configurációs fájlt is.
+Végül, magát a \textit{Dockerfile-t} amelyben az initializációs konfigurációs elemeket adjuk meg.
+\subsection{docker-compose.yml}
+Ebben a fájlban kettő szolgáltatást kell meghírdetnünk a springbootot és a prometheust.
+A sprinboot-ot a 8080-as porton hírdetjük meg és azonos hálózatba kötjük a prometheussal.
+A prometheust pedig a 9090-es porton hírdetjük meg, és ugyanúgy egy hálózatba kötjük őket.
+Végül létrehozzuk ezt a közös hálózatot.
+docker-compose.yml tartalma:
+\begin{lstlisting}
+	services:
+		springboot_service:
+			build: .
+			restart: always
+			ports:
+				- 8080:8080
+			networks:
+				- localprom
+		prometheus:
+			image: prom/prometheus:v2.44.0
+			container_name: prometheus
+			ports:
+				- "9090:9090"
+			networks:
+				- localprom
+			volumes:
+				- ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+	networks:
+		localprom:
+\end{lstlisting}
+\subsection{prometheus.yml}
+Ebben a fájlban, megadjuk a prometheus applikáció nevét, webes elérési útját (/actuator/prometheus), az adatgyűjtések közötti eltelt intervallumot ami 3 másodperc. Majd meghírdetjük a Java applikációnak a prometheust.
+
+prometheus.yml tartalma:
+\begin{lstlisting}
+	scrape_configs:
+		- job_name: 'MyAppMetrics'
+		metrics_path: '/actuator/prometheus'
+		scrape_interval: 3s
+		static_configs:
+			- targets: ['host.docker.internal:8080']
+			labels:
+				application: 'My Spring Boot Application'
+\end{lstlisting}
+
+\subsection{Dockerfile}
+Alapvetően a Dockerfileban adjuk meg a kezdeti konfigurációkat, mivel induljon el az alkalmazás, milyen packageket futtasson le.
+A \textbf{FROM} részben megadjuk a Java verzióját és a projekt kezelőjének a típusát amely a maven.
+Ezt követően a \textbf{src} mappát bemásoljuk a docker által készített /home/app/src mappába, melyet követ a Java fájl konfigurációs fájljának az átmásolása a \textit{pom.xml}.
+Majd lefuttatjuk a clean package commandot amely kitisztítja a pom.xml fájlt. Majd kihírdetjük az applikációt a 8080-as porton. Melyet követ a jar fájl bementi pontjának a meghatározása.
+\\
+Dockerfile tartalma:
+\begin{lstlisting}
+	FROM maven:3.8.3-openjdk-17 AS build
+	COPY src /home/app/src
+	COPY pom.xml /home/app
+	RUN mvn -f /home/app/pom.xml clean package
+	EXPOSE 8080
+	ENTRYPOINT ["java","-jar","/home/app/target/spring_prom_app.jar"]
+\end{lstlisting}
